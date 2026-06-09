@@ -17,7 +17,7 @@ stream = sdr.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32)
 sdr.activateStream(stream)
 
 # FM stations to scan 
-stations = [88.5,90.1,91.9,93.3,95.5,97.1,99.5,101.1,103.5,105.7,107.3]
+stations = [88.5,90.1,91.9,93.3,95.5,97.1,99.5,100.3,101.1,103.5,105.9,107.3]
 
 print("\n")
 
@@ -29,7 +29,7 @@ results = []
 for freq in stations:
     #tune to frequency
     sdr.setFrequency(SOAPY_SDR_RX,0,freq*1e6)
-    time.sleep(0.1) #let it settle
+    time.sleep(0.5) #let it settle
 
     #grab samples
     buff = np.zeros(1024,dtype=np.complex64)
