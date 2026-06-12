@@ -11,19 +11,16 @@ from datetime import datetime
 import time
 
 # ─── CONFIGURATION ────────────────────────────────────────────
-SAMPLE_RATE = 2e6    # 2 MHz sample rate
-GAIN        = 40     # receiver gain
-NUM_SAMPLES = 4096   # samples per measurement
-STEP        = 0.2    # scan every 0.2 MHz
-FM_START    = 87.5   # FM band start (MHz)
-FM_END      = 108.0  # FM band end (MHz)
+GAIN     = 16      # receiver gain
+FM_START = 87.5    # FM band start (MHz)
+FM_END   = 108.0   # FM band end (MHz)
 # ──────────────────────────────────────────────────────────────
 
 def setup_sdr():
-    # Open HackRF and configure it — crash early with a clear message if not found
+    # Open HackRF and configure it — exit early with clear message if not found
     try:
         sdr = SoapySDR.Device(dict(driver="hackrf"))
-        sdr.setSampleRate(SOAPY_SDR_RX, 0, SAMPLE_RATE)
+        sdr.setSampleRate(SOAPY_SDR_RX, 0, 2e6)
         sdr.setGain(SOAPY_SDR_RX, 0, GAIN)
         print("HackRF opened successfully!")
         return sdr
@@ -32,48 +29,44 @@ def setup_sdr():
         print("Make sure the HackRF is plugged in and in HackRF mode.")
         return None
 
-def measure_power(sdr, stream, freq_mhz):
-    # Tune to frequency and measure signal power
-    try:
-        sdr.setFrequency(SOAPY_SDR_RX, 0, freq_mhz * 1e6)
-        time.sleep(0.05)  # let tuner settle
+def scan_fm_band_fft(sdr, stream):
+    # Tune to center of FM band and capture the whole band in one FFT
+    center_freq = (FM_START + FM_END) / 2  # 97.75 MHz center
 
-        # Grab samples with 1 second timeout
-        buff = np.zeros(NUM_SAMPLES, dtype=np.complex64)
-        sr = sdr.readStream(stream, [buff], len(buff), timeoutUs=1000000)
+    # Use 10 MHz sample rate to see more of the band at once
+    sdr.setSampleRate(SOAPY_SDR_RX, 0, 10e6)
+    sdr.setFrequency(SOAPY_SDR_RX, 0, center_freq * 1e6)
+    sdr.setGain(SOAPY_SDR_RX, 0, GAIN)
+    time.sleep(0.1)
 
-        # Check if we actually got samples
-        if sr.ret <= 0:
-            print(f"  Warning: no samples received at {freq_mhz:.1f} MHz")
-            return None
+    print(f"\nCapturing FM band {FM_START}–{FM_END} MHz...\n")
 
-        # Compute power in dB
-        power = np.mean(np.abs(buff) ** 2)
-        power_db = 10 * np.log10(power + 1e-10)
-        return power_db
+    # Grab a large buffer for better frequency resolution
+    num_samples = 65536
+    buff = np.zeros(num_samples, dtype=np.complex64)
+    sr = sdr.readStream(stream, [buff], len(buff), timeoutUs=2000000)
 
-    except Exception as e:
-        print(f"  Error measuring {freq_mhz:.1f} MHz: {e}")
-        return None
+    if sr.ret <= 0:
+        print("Error: no samples received")
+        return []
 
-def scan_fm_band(sdr, stream):
-    # Scan every frequency in the FM band
-    frequencies = np.arange(FM_START, FM_END, STEP)
-    results = []
+    print(f"Captured {sr.ret} samples — computing FFT...")
+
+    # Compute FFT and convert to dB
+    fft_result = np.fft.fftshift(np.fft.fft(buff))
+    magnitude_db = 10 * np.log10(np.abs(fft_result)**2 + 1e-10)
+
+    # Build frequency axis centered on our tuned frequency (+/- 5 MHz)
+    freq_axis = np.linspace(center_freq - 5, center_freq + 5, num_samples)
+
+    # Filter to FM band only and build results list
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    results = []
+    for i, freq in enumerate(freq_axis):
+        if FM_START <= freq <= FM_END:
+            results.append((freq, magnitude_db[i], timestamp))
 
-    print(f"\nScanning FM band {FM_START}–{FM_END} MHz...\n")
-
-    for freq in frequencies:
-        power_db = measure_power(sdr, stream, freq)
-
-        # Skip this frequency if measurement failed
-        if power_db is None:
-            continue
-
-        results.append((freq, power_db, timestamp))
-        print(f"    {freq:.1f} MHz  -->  {power_db:.2f} dB")
-
+    print(f"Done — {len(results)} frequency points collected.")
     return results
 
 def save_to_csv(results):
@@ -84,9 +77,8 @@ def save_to_csv(results):
             writer = csv.writer(f)
             writer.writerow(["Frequency (MHz)", "Power (dB)", "Timestamp"])
             for freq, power, ts in results:
-                writer.writerow([round(freq, 1), round(power, 2), ts])
+                writer.writerow([round(freq, 4), round(power, 2), ts])
 
-        # These two lines were inside the with block before — now correctly outside
         print(f"\nData saved to {filename}")
         return filename
 
@@ -94,18 +86,34 @@ def save_to_csv(results):
         print(f"Error saving CSV: {e}")
         return None
 
-def plot_spectrum(results):
+def get_top_stations(results, n=5):
+    # Deduplicate by rounding to nearest 0.1 MHz then return top n by power
+    seen = set()
+    unique_results = []
+    for freq, power, ts in results:
+        rounded = round(freq, 1)
+        if rounded not in seen:
+            seen.add(rounded)
+            unique_results.append((rounded, power, ts))
+
+    return sorted(unique_results, key=lambda x: x[1], reverse=True)[:n]
+
+def plot_spectrum(results, top5):
     # Plot the full FM band spectrum
     try:
         freqs  = [r[0] for r in results]
         powers = [r[1] for r in results]
 
         plt.figure(figsize=(14, 6))
-        plt.plot(freqs, powers, color="cyan", linewidth=1.5)
+        plt.plot(freqs, powers, color="cyan", linewidth=1.0)
         plt.fill_between(freqs, powers, min(powers), alpha=0.3, color="cyan")
 
-        # Mark strongest stations
-        top5 = sorted(results, key=lambda x: x[1], reverse=True)[:5]
+        # Draw noise floor line at 10th percentile
+        noise_floor = np.percentile(powers, 10)
+        plt.axhline(y=noise_floor, color='red', linestyle='--', linewidth=1,
+                    label=f'Noise Floor ({noise_floor:.1f} dB)')
+
+        # Mark top 5 strongest stations
         for freq, power, _ in top5:
             plt.annotate(f"{freq:.1f}", xy=(freq, power),
                          xytext=(0, 10), textcoords="offset points",
@@ -115,6 +123,7 @@ def plot_spectrum(results):
         plt.title(f"FM Band Spectrum Scan - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         plt.xlabel("Frequency (MHz)")
         plt.ylabel("Signal Power (dB)")
+        plt.legend(loc='upper right')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig("fm_spectrum.png", dpi=150)
@@ -135,8 +144,8 @@ def main():
         stream = sdr.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32)
         sdr.activateStream(stream)
 
-        # Scan the FM band
-        results = scan_fm_band(sdr, stream)
+        # Capture FM band via FFT
+        results = scan_fm_band_fft(sdr, stream)
 
     except Exception as e:
         print(f"Error during scan: {e}")
@@ -149,7 +158,7 @@ def main():
             sdr.closeStream(stream)
             print("HackRF closed cleanly.")
 
-    # Only save and plot if we got data
+    # Exit if no data collected
     if not results:
         print("No data collected. Exiting.")
         return
@@ -157,14 +166,16 @@ def main():
     # Save to CSV
     save_to_csv(results)
 
-    # Print top 5 stations
+    # Get top 5 unique stations
+    top5 = get_top_stations(results)
+
+    # Print top 5
     print("\nTop 5 strongest stations:")
-    top5 = sorted(results, key=lambda x: x[1], reverse=True)[:5]
     for freq, power, _ in top5:
         print(f"    {freq:.1f} MHz  -->  {power:.2f} dB")
 
-    # Plot spectrum
-    plot_spectrum(results)
+    # Plot spectrum with top 5 marked
+    plot_spectrum(results, top5)
 
 if __name__ == "__main__":
     main()
