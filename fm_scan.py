@@ -61,11 +61,11 @@ for freq,power in top3:
     print(f" {freq} Mhz - {power:.2f} dB")
 
 #save to csv
-filename = f"fm_scan_{datetime.now().strftime('%Y%m%d_%H%M%s')}.csv"
-with open(filename, "w", newline=" ") as f:
-    writer = csv.writer(f)
-    writer.writerow(["frequency (MHZ) , power (db), timestamp"])
-    for freq,power in results:
-        writer.writerow([freq, round(power,2), datetime.now().strftime('%Y%m%d_%H%M%s')])
+# filename = f"fm_scan_{datetime.now().strftime('%Y%m%d_%H%M%s')}.csv"
+# with open(filename, "w", newline=" ") as f:
+#     writer = csv.writer(f)
+#     writer.writerow(["frequency (MHZ) , power (db), timestamp"])
+#     for freq,power in results:
+#         writer.writerow([freq, round(power,2), datetime.now().strftime('%Y%m%d_%H%M%s')])
 
-    print(f"\nresults saved to {filename}")
+#     print(f"\nresults saved to {filename}")
