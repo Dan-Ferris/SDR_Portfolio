@@ -69,6 +69,9 @@ int main() {
     printf("HackRF opened successfully!\n");
     printf("Scanning %d MHz to %d MHz...\n\n", FREQ_START/1000000, FREQ_END/1000000);
 
+    FILE* log_file = fopen("/home/adam/SDR_Projects/P3_SIGINT_Scanner/sigint_scan.csv", "w");
+    fprintf(log_file, "Frequency (MHz), Power (dB), Timestamp\n");
+
     // Step 5 — sweep frequency range
     for (uint32_t freq = FREQ_START; freq <= FREQ_END; freq += FREQ_STEP) {
         // Reset buffer flag
@@ -92,8 +95,17 @@ int main() {
         double power_db = compute_power(sample_buffer, sizeof(sample_buffer));
 
         // Print result
-        printf("  %d MHz  -->  %.2f dB\n", freq/1000000, power_db);
+        printf("  %.1f MHz  -->  %.2f dB\n", freq/1000000.0, power_db);
+
+        // Write results to csv file
+        time_t now = time(NULL);
+        char timestamp[26];
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
+        fprintf(log_file, "%.1f,%.2f,%s\n", freq/1000000.0, power_db, timestamp);
     }
+    
+    fclose(log_file);
+    printf("results saved to sigint_scan.csv\n");
 
     // Step 6 — clean up
     hackrf_close(device);
