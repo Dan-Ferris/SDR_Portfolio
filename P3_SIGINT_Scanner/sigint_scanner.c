@@ -12,7 +12,7 @@
 #define FREQ_START      88000000  // 88 MHz FM band start
 #define FREQ_END        108000000 // 108 MHz FM band end
 #define FREQ_STEP       200000    // scan every 200 kHz
-#define POWER_THRESHOLD -60.0     // minimum dB to log as signal
+#define POWER_THRESHOLD 20.0     // minimum dB to log as signal
 // ──────────────────────────────────────────────────────────────
 
 // Global buffer and flag for sample collection
@@ -94,14 +94,17 @@ int main() {
         // Compute signal power
         double power_db = compute_power(sample_buffer, sizeof(sample_buffer));
 
-        // Print result
-        printf("  %.1f MHz  -->  %.2f dB\n", freq/1000000.0, power_db);
+        if (power_db >= POWER_THRESHOLD) {
+            // Print result
+            printf("  %.1f MHz  -->  %.2f dB\n", freq/1000000.0, power_db);
+            // Log to CSV
+            time_t now = time(NULL);
+            char timestamp[26];
+            strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
+            fprintf(log_file, "%.1f,%.2f,%s\n", freq/1000000.0, power_db, timestamp);
+        }
 
-        // Write results to csv file
-        time_t now = time(NULL);
-        char timestamp[26];
-        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
-        fprintf(log_file, "%.1f,%.2f,%s\n", freq/1000000.0, power_db, timestamp);
+
     }
     
     fclose(log_file);
